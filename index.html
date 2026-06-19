@@ -810,38 +810,44 @@ function switchTab(n){
   document.querySelectorAll(".tab-panel").forEach((p,i)=>p.classList.toggle("on",i===n));
 }
 
-// Universal clipboard copy with iOS Safari / file:// fallback
-// iOS Safari requires execCommand('copy') to run SYNCHRONOUSLY inside the
-// click handler — no async/await/promise chain before it, or it silently fails.
-// So we try execCommand FIRST (sync), and only use the async Clipboard API
-// as a secondary attempt if execCommand isn't available at all.
-function doCopySync(text){
-  // iOS Safari works best when copy happens synchronously inside the tap/click.
+// Universal clipboard copy with older iOS Safari fallback
+// Strategy:
+// 1) Try synchronous execCommand on a real visible-ish textarea inside the tap.
+// 2) Try contenteditable + Range selection for older WebKit.
+// 3) Try navigator.clipboard on modern HTTPS browsers.
+// 4) If all fail, open a manual-copy overlay with selected text.
+function selectNodeText(el){
+  const range=document.createRange();
+  range.selectNodeContents(el);
+  const sel=window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+function doCopyTextarea(text){
   let ta=null;
   try{
     ta=document.createElement("textarea");
     ta.value=text||"";
     ta.setAttribute("readonly","");
+    ta.setAttribute("aria-hidden","true");
     ta.style.position="fixed";
-    ta.style.top="0";
-    ta.style.left="0";
-    ta.style.width="2px";
-    ta.style.height="2px";
-    ta.style.padding="0";
-    ta.style.border="0";
-    ta.style.outline="0";
-    ta.style.boxShadow="none";
-    ta.style.background="transparent";
-    ta.style.fontSize="16px"; // prevents iOS zoom
-    ta.style.opacity="0.01";  // not fully hidden; iOS may reject opacity:0
+    ta.style.top="12px";
+    ta.style.left="12px";
+    ta.style.width="220px";
+    ta.style.height="80px";
+    ta.style.zIndex="99999";
+    ta.style.fontSize="16px";          // prevents iOS zoom
+    ta.style.opacity="0.001";          // not opacity:0 — older iOS may reject it
+    ta.style.webkitUserSelect="text";
+    ta.style.userSelect="text";
     document.body.appendChild(ta);
 
-    ta.focus();
+    ta.focus({preventScroll:true});
     ta.select();
     ta.setSelectionRange(0,ta.value.length);
 
-    const ok=document.execCommand("copy");
-    return !!ok;
+    return !!document.execCommand("copy");
   }catch(e){
     return false;
   }finally{
@@ -853,15 +859,93 @@ function doCopySync(text){
   }
 }
 
+function doCopyContentEditable(text){
+  let div=null;
+  try{
+    div=document.createElement("div");
+    div.contentEditable="true";
+    div.textContent=text||"";
+    div.style.position="fixed";
+    div.style.top="12px";
+    div.style.left="12px";
+    div.style.width="220px";
+    div.style.height="80px";
+    div.style.overflow="hidden";
+    div.style.zIndex="99999";
+    div.style.fontSize="16px";
+    div.style.opacity="0.001";
+    div.style.webkitUserSelect="text";
+    div.style.userSelect="text";
+    document.body.appendChild(div);
+
+    selectNodeText(div);
+    div.focus({preventScroll:true});
+
+    return !!document.execCommand("copy");
+  }catch(e){
+    return false;
+  }finally{
+    if(div&&div.parentNode)div.parentNode.removeChild(div);
+    if(window.getSelection){
+      const sel=window.getSelection();
+      if(sel)sel.removeAllRanges();
+    }
+  }
+}
+
+function doCopySync(text){
+  // Must run synchronously inside the click/tap handler.
+  return doCopyTextarea(text) || doCopyContentEditable(text);
+}
+
+function showManualCopy(text){
+  let old=document.getElementById("manual-copy-overlay");
+  if(old)old.remove();
+
+  const box=document.createElement("div");
+  box.id="manual-copy-overlay";
+  box.style.position="fixed";
+  box.style.inset="0";
+  box.style.zIndex="100000";
+  box.style.background="rgba(0,0,0,.62)";
+  box.style.display="flex";
+  box.style.alignItems="center";
+  box.style.justifyContent="center";
+  box.style.padding="16px";
+
+  box.innerHTML=`
+    <div style="background:#fff;border-radius:16px;width:100%;max-width:720px;padding:16px;border:1.5px solid #ddd;box-shadow:0 8px 30px rgba(0,0,0,.25)">
+      <div style="font-size:15px;font-weight:600;margin-bottom:8px">Скопируй вручную</div>
+      <div style="font-size:12px;color:#666;line-height:1.45;margin-bottom:10px">На этом iPhone автоматическое копирование заблокировано Safari. Текст уже выделен: нажми <b>Copy / Скопировать</b> в меню iOS.</div>
+      <textarea id="manual-copy-text" style="width:100%;height:260px;font-size:16px;line-height:1.45;padding:10px;border:1.5px solid #ddd;border-radius:10px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">${(text||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}</textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap">
+        <button onclick="selectManualCopyText()" style="font-size:13px;padding:9px 14px;border-radius:9px;border:1.5px solid #ddd;background:#f8f8f7">Выделить весь текст</button>
+        <button onclick="document.getElementById('manual-copy-overlay').remove()" style="font-size:13px;padding:9px 14px;border-radius:9px;border:1.5px solid #1a1a1a;background:#1a1a1a;color:#fff">Закрыть</button>
+      </div>
+    </div>`;
+  document.body.appendChild(box);
+  setTimeout(selectManualCopyText,50);
+}
+
+function selectManualCopyText(){
+  const ta=document.getElementById("manual-copy-text");
+  if(!ta)return;
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0,ta.value.length);
+}
+
 function doCopy(text,onDone){
-  // 1) Try synchronous execCommand FIRST — this is what makes iOS Safari work,
-  //    because it must happen directly inside the click handler.
   const syncOk=doCopySync(text);
   if(syncOk){onDone(true);return;}
-  // 2) Fallback to modern async Clipboard API (covers some edge browsers)
-  if(navigator.clipboard&&navigator.clipboard.writeText){
-    navigator.clipboard.writeText(text).then(()=>onDone(true)).catch(()=>onDone(false));
-  } else {
+
+  if(navigator.clipboard&&navigator.clipboard.writeText&&window.isSecureContext){
+    navigator.clipboard.writeText(text).then(()=>onDone(true)).catch(()=>{
+      showManualCopy(text);
+      onDone(false);
+    });
+  }else{
+    showManualCopy(text);
     onDone(false);
   }
 }
@@ -872,7 +956,7 @@ function copyElText(elId,btnId){
   const txt=el.tagName==="TEXTAREA"?el.value:el.textContent;
   doCopy(txt,(ok)=>{
     if(ok){showToast("✓ Скопировано — вставь в Custom Instructions");if(btnId)markCopied(btnId);}
-    else{showToast("Не удалось скопировать — выдели текст вручную и используй Copy");}
+    else{showToast("Открыл ручное копирование");}
   });
 }
 function copyEl(elId,btnId){
@@ -880,7 +964,7 @@ function copyEl(elId,btnId){
   if(!el)return;
   doCopy(el.textContent,(ok)=>{
     if(ok){showToast("✓ Скопировано — вставь в Claude или ChatGPT");if(btnId)markCopied(btnId);}
-    else{showToast("Не удалось скопировать — выдели текст вручную и используй Copy");}
+    else{showToast("Открыл ручное копирование");}
   });
 }
 function markCopied(btnId){
