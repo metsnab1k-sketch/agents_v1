@@ -651,7 +651,7 @@ function openModal(idx){
     <div class="pill-note"><b>System Prompt</b> — профессиональная инструкция для настройки агента. Вставь один раз в Custom Instructions или Project — агент работает в роли постоянно.${isBizAgent?" <b>Единые правила executive-коммуникации уже добавлены в конец промпта.</b>":""}</div>
     <div class="sys-block"><div class="sys-head"><span class="sys-lbl"><i class="ti ti-code" style="font-size:13px"></i>System Prompt${isBizAgent?' <span style="font-size:10px;background:#fef3c7;color:#d97706;padding:1px 6px;border-radius:4px;border:1px solid #fde68a;margin-left:6px">+ единые правила</span>':""}</span><button class="cpbtn" id="cb-sys-${idx}" onclick="copyElText('sys-text-${idx}','cb-sys-${idx}')"><i class="ti ti-copy" style="font-size:11px"></i> Копировать</button></div>
     <div class="sys-body">${sysWithRules}</div>
-    <textarea id="sys-text-${idx}" style="position:absolute;opacity:0;pointer-events:none">${sysWithRules}</textarea></div>
+    <textarea id="sys-text-${idx}" style="position:fixed;top:-1000px;left:-1000px;width:1px;height:1px;opacity:.01">${sysWithRules}</textarea></div>
     <div><div class="slbl">Куда вставить</div><div class="tgrid">
       <div class="tchip"><i class="ti ti-brand-openai"></i>ChatGPT → Custom Instructions</div>
       <div class="tchip"><i class="ti ti-brand-openai"></i>ChatGPT → GPT Builder → Instructions</div>
@@ -816,46 +816,40 @@ function switchTab(n){
 // So we try execCommand FIRST (sync), and only use the async Clipboard API
 // as a secondary attempt if execCommand isn't available at all.
 function doCopySync(text){
+  // iOS Safari works best when copy happens synchronously inside the tap/click.
   let ta=null;
   try{
     ta=document.createElement("textarea");
-    ta.value=text;
-    ta.contentEditable="true";
-    ta.readOnly=false;
+    ta.value=text||"";
+    ta.setAttribute("readonly","");
     ta.style.position="fixed";
     ta.style.top="0";
     ta.style.left="0";
-    ta.style.width="2em";
-    ta.style.height="2em";
+    ta.style.width="2px";
+    ta.style.height="2px";
     ta.style.padding="0";
-    ta.style.border="none";
-    ta.style.outline="none";
+    ta.style.border="0";
+    ta.style.outline="0";
     ta.style.boxShadow="none";
     ta.style.background="transparent";
-    ta.style.fontSize="16px";
-    ta.style.opacity="0.01";
+    ta.style.fontSize="16px"; // prevents iOS zoom
+    ta.style.opacity="0.01";  // not fully hidden; iOS may reject opacity:0
     document.body.appendChild(ta);
 
-    const isIOS=/iP(ad|hone|od)/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
-    if(isIOS){
-      const range=document.createRange();
-      range.selectNodeContents(ta);
-      const sel=window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-      ta.setSelectionRange(0,text.length);
-    } else {
-      ta.focus();
-      ta.select();
-      ta.setSelectionRange(0,text.length);
-    }
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0,ta.value.length);
+
     const ok=document.execCommand("copy");
-    return ok;
+    return !!ok;
   }catch(e){
     return false;
   }finally{
     if(ta&&ta.parentNode)ta.parentNode.removeChild(ta);
-    if(window.getSelection)window.getSelection().removeAllRanges();
+    if(window.getSelection){
+      const sel=window.getSelection();
+      if(sel)sel.removeAllRanges();
+    }
   }
 }
 
